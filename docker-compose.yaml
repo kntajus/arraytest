@@ -1,0 +1,35 @@
+version: "3.9"
+services:
+  arraytest:
+    build:
+      context: .
+    depends_on:
+      migrate-arraytest:
+        condition: service_completed_successfully
+  arraytest-db:
+    image: postgres:14
+    environment:
+      - POSTGRES_USER=arraytest
+      - POSTGRES_PASSWORD=postgres
+    ports:
+      - 5432
+    volumes:
+      - arraytest-db:/var/lib/postgresql/data
+    healthcheck:
+      test: 
+        - CMD-SHELL
+        - pg_isready -U arraytest
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  migrate-arraytest:
+    image: migrate/migrate
+    volumes:
+      - ./internal/db/schema:/migrations
+    command: ["-path", "/migrations", "-database", "postgres://arraytest:postgres@arraytest-db:5432/arraytest?sslmode=disable", "up"]
+    depends_on:
+      arraytest-db:
+        condition: service_healthy
+volumes:
+  arraytest-db:
+    driver: local
