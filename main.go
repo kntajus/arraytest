@@ -9,6 +9,11 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
+const retrieveCustomEnumArrayTypes = `SELECT arrtype.oid, arrtype.typname
+FROM pg_type arrtype
+JOIN pg_type enumtype ON arrtype.typelem = enumtype.oid AND arrtype.typcategory = 'A'
+WHERE enumtype.typcategory = 'E'`
+
 func main() {
 	conn, err := pgx.Connect(context.Background(), "postgres://arraytest:postgres@arraytest-db:5432/arraytest?sslmode=disable")
 	if err != nil {
@@ -16,27 +21,10 @@ func main() {
 	}
 	defer conn.Close(context.Background())
 
-	var oid uint32
-	name := "fruit"
-	err = conn.QueryRow(context.Background(), "SELECT oid FROM pg_type WHERE typname = $1 AND typcategory = 'E'", name).Scan(&oid)
+	err = registerEnumArrayTypes(conn)
 	if err != nil {
-		log.Fatal().Err(err).Msg("Couldn't retrieve custom enum data")
+		log.Fatal().Err(err).Msg("Failed to register custom enum array types")
 	}
-	conn.ConnInfo().RegisterDataType(pgtype.DataType{
-		Value: &pgtype.EnumType{},
-		Name:  name,
-		OID:   oid,
-	})
-
-	err = conn.QueryRow(context.Background(), "SELECT oid, typname FROM pg_type WHERE typelem = $1 AND typcategory = 'A'", oid).Scan(&oid, &name)
-	if err != nil {
-		log.Fatal().Err(err).Msg("Couldn't retrieve custom enum array data")
-	}
-	conn.ConnInfo().RegisterDataType(pgtype.DataType{
-		Value: &pgtype.EnumArray{},
-		Name:  name,
-		OID:   oid,
-	})
 
 	db := store.New(conn)
 	err = db.AddChoice(context.Background(), []store.Fruit{store.FruitApple})
@@ -44,4 +32,33 @@ func main() {
 		log.Fatal().Err(err).Send()
 	}
 	log.Info().Msg("Row inserted successfully")
+}
+
+func registerEnumArrayTypes(conn *pgx.Conn) error {
+	enumTypes, err := fetchEnumArrayTypesInfo(conn)
+	if err != nil {
+		return err
+	}
+
+	for k, v := range enumTypes {
+		conn.ConnInfo().RegisterDataType(pgtype.DataType{Value: &pgtype.EnumArray{}, Name: v, OID: k})
+	}
+	return nil
+}
+
+func fetchEnumArrayTypesInfo(conn *pgx.Conn) (map[uint32]string, error) {
+	rows, err := conn.Query(context.Background(), retrieveCustomEnumArrayTypes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	enumTypes := make(map[uint32]string)
+	for rows.Next() {
+		var oid uint32
+		var name string
+		rows.Scan(&oid, &name)
+		enumTypes[oid] = name
+	}
+	return enumTypes, nil
 }
